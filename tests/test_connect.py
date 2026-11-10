@@ -56,9 +56,13 @@ elif action=='connect':
     alias=a[a.index('--alias')+1]
     tunnel=a[a.index('--tunnel-id')+1]
     ref=a[a.index('--runtime-api-key')+1]
-    assert ref=='env:OPENAI_TUNNEL_KEY'
+    if ref.startswith('file:'):
+        keyfile=Path(ref[5:]);assert keyfile.is_file() and keyfile.stat().st_mode&0o077==0
+        assert 'OPENAI_TUNNEL_KEY' not in os.environ
+    else:
+        assert ref=='env:OPENAI_TUNNEL_KEY'
     profile=Path(os.environ['TUNNEL_CLIENT_PROFILE_DIR'])/(alias+'.yaml'); profile.parent.mkdir(parents=True,exist_ok=True)
-    profile.write_text('control_plane:\n  api_key: env:OPENAI_TUNNEL_KEY\n')
+    profile.write_text('control_plane:\n  api_key: '+ref+'\n')
     state[alias]={'alias':alias,'tunnel_id':tunnel,'process_running':True,'healthy':True,'ready':True,'profile_path':str(profile),'health_url':'http://127.0.0.1:12345','logs':'not-for-output'}
     p.write_text(json.dumps(state)); print(json.dumps(state[alias]))
 elif action=='status':

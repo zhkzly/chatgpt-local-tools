@@ -5,6 +5,8 @@ __pycache__/
 .DS_Store
 .env
 .env.*
+*.key
+.credentials/
 *.local.json
 *.local.yaml
 *.log

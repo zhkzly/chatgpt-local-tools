@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "servers": {
+    "llm-wiki": {
+      "transport": "stdio",
+      "command": "node",
+      "args": ["/usr/lib/LLM Wiki/mcp-server/dist/src/index.js"],
+      "env": {"LLM_WIKI_API_BASE_URL": "http://127.0.0.1:19828"},
+      "tunnel_id": "",
+      "runtime_key_file": "${CONFIG_DIR}/.credentials/llm-wiki.key"
+    }
+  }
+}

@@ -14,6 +14,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import select
 import shlex
 import signal
 import socket
@@ -102,14 +103,14 @@ def managed_runtime(binary: Path, directory: Path, config: Path) -> dict:
         base = f"http://127.0.0.1:{unused.getsockname()[1]}"
     environment = connect.baseline_environment()
     environment.update(LOCAL_TOOLS_TEST_BASE_URL=base,
-                       LOCAL_TOOLS_TEST_RUNTIME_KEY="local-fixture-key-not-a-real-account",
                        NO_PROXY="127.0.0.1", no_proxy="127.0.0.1")
 
-    def launch(action: str) -> dict:
+    def launch(action: str, extra: list[str] | None = None) -> dict:
         args = [sys.executable, "-c", LAUNCHER, str(SCRIPT), "--client", str(binary),
                 "--state-dir", str(directory), action, "--server", "demo"]
-        if action == "start":
+        if action in ("start", "migrate-legacy"):
             args += ["--config", str(config)]
+        args += extra or []
         result = subprocess.run(args, env=environment, text=True, capture_output=True, timeout=90)
         require(result.returncode == 0,
                 f"Real native {action} failed ({result.returncode}): {result.stderr[-2000:]}")
@@ -132,8 +133,35 @@ def managed_runtime(binary: Path, directory: Path, config: Path) -> dict:
         launch("stop")
         stopped = launch("status")
         require(not connect.contains_true(stopped, "process_running"), "Native stop left its process running")
+        # Exercise a second invocation with no key environment or terminal input.
+        # The reviewed legacy fixture uses the same flock/SIGINT contract as the
+        # previous Python launcher; it does not run a second tunnel instance.
+        old_script = directory / "reviewed-legacy.py"
+        old_lock = directory / "legacy.lock"
+        old_script.write_text("import fcntl,sys,time\nf=open(sys.argv[1],'w')\nfcntl.flock(f,fcntl.LOCK_EX)\nprint('locked',flush=True)\ntime.sleep(60)\n")
+        old = subprocess.Popen([sys.executable, str(old_script), str(old_lock)],
+                               stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                               stderr=subprocess.DEVNULL, start_new_session=True)
+        try:
+            readable, _, _ = select.select([old.stdout], [], [], 3)
+            require(bool(readable) and old.stdout.readline() == b'locked\n', "Legacy fixture did not lock")
+            migrated = launch("migrate-legacy", ["--legacy-script", str(old_script),
+                              "--legacy-lock", str(old_lock), "--legacy-profile", str(directory / 'profiles/demo.yaml')])
+            require(migrated.get('legacy_runner_migrated') is True, "Reviewed legacy fixture was not handed over")
+            old.wait(timeout=3)
+            require(connect.contains_true(migrated, "process_running"), "Restart with saved key did not run")
+            require(connect.contains_true(migrated, "healthy"), "Restart with saved key was not healthy")
+            profile = (directory / 'profiles/demo.yaml').read_text()
+            require('file:' in profile and 'local-fixture-key-not-a-real-account' not in profile,
+                    "Native profile must hold a file reference, never the fixture key")
+            launch("stop")
+            require(not connect.contains_true(launch("status"), "process_running"), "Restarted runtime did not stop")
+        finally:
+            stop_group(old)
+            old.stdout.close()
         return {"launcher_exited_runtime_survived": True, "separate_unix_session": True,
                 "healthy": True, "ready_observed": ready, "stop_verified": True,
+                "saved_key_restart_without_prompt": True, "reviewed_legacy_handover": True,
                 "fixture": "unreachable-loopback-control-plane"}
     finally:
         # Also clean up a partially failed startup; the launcher writes ownership
@@ -200,8 +228,11 @@ def main() -> None:
         directory = Path(temporary)
         config = directory / "demo.connection.json"
         value = connect.load_config(connect.SKILL_DIR / "assets/demo.connection.json")
+        value["servers"]["demo"].pop('runtime_key_env', None)
+        key_file = directory / '.credentials/runtime.key'
+        connect.write_runtime_key(key_file, 'local-fixture-key-not-a-real-account')
         value["servers"]["demo"].update(tunnel_id="tunnel_22222222222222222222222222222222",
-                                         runtime_key_env="LOCAL_TOOLS_TEST_RUNTIME_KEY")
+                                         runtime_key_file=str(key_file))
         connect.write_json(config, value)
         managed = managed_runtime(binary, directory / "managed", config)
         tunneled = tunneled_call(binary, directory, config)

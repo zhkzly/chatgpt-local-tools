@@ -5,6 +5,7 @@ Python 3.10+, standard library. inspect/import-mcp never execute target commands
 check starts the configured MCP or contacts its HTTP endpoint for discovery only.
 start delegates background supervision to the official client's native runtimes.
 No cloud tunnel, API key, ChatGPT plugin, or system service is created here.
+Explicit runtime_key_file configuration can save/reuse an existing runtime key.
 """
 from __future__ import annotations
 
@@ -61,7 +62,7 @@ RESERVED_RUNTIME_PREFIXES = (
 RESERVED_RUNTIME_NAMES = {"ENV", "IFS", "CDPATH", "SHELLOPTS", "BASHOPTS"}
 SERVER_KEYS = {
     "transport", "command", "args", "cwd", "env", "env_from", "url", "headers_from_env",
-    "tunnel_id", "runtime_key_env", "timeout_seconds",
+    "tunnel_id", "runtime_key_env", "runtime_key_file", "timeout_seconds",
 }
 RESERVED_HEADERS = {"host", "content-length", "content-type", "accept", "mcp-session-id", "mcp-protocol-version", "proxy-authorization"}
 SCRIPT = Path(__file__).resolve()
@@ -215,6 +216,10 @@ def validate_config(config: dict) -> dict:
         env = string_map(server.get("env", {}), "env")
         refs = string_map(server.get("env_from", {}), "env_from")
         key_env = runtime_key_name(server)
+        if "runtime_key_file" in server:
+            path = server["runtime_key_file"]
+            if not isinstance(path, str) or not path or "\x00" in path:
+                raise SetupError("runtime_key_file must be a nonempty local path, never a key value.")
         for key, value in env.items():
             if not ENV_NAME.fullmatch(key):
                 raise SetupError("Invalid environment variable name.")
@@ -253,6 +258,63 @@ def selected(config: dict, name: str) -> dict:
 
 def expand(value: str, config_path: Path) -> str:
     return value.replace("${CONFIG_DIR}", str(config_path.parent)).replace("${SKILL_DIR}", str(SKILL_DIR))
+
+
+def runtime_key_path(server: dict, config_path: Path) -> Path | None:
+    value = server.get("runtime_key_file")
+    if value is None:
+        return None
+    path = Path(expand(value, config_path)).expanduser()
+    if not path.is_absolute():
+        path = config_path.parent / path
+    # Do not resolve the final component: symlinks must remain detectable.
+    return Path(os.path.abspath(path))
+
+
+def validate_runtime_key_file(path: Path, *, allow_empty: bool = False) -> None:
+    try:
+        parent = path.parent.lstat()
+        if not stat.S_ISDIR(parent.st_mode) or parent.st_uid != os.geteuid() or parent.st_mode & 0o022:
+            raise SetupError("The credential parent must be an owned directory without group/other write access.")
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(fd, "rb") as stream:
+            info = os.fstat(stream.fileno())
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o077:
+                raise SetupError("The runtime key must be an owned regular file with permissions 0600 or 0400.")
+            if info.st_size > 8192 or (not allow_empty and info.st_size == 0):
+                raise SetupError("The runtime key file is empty or exceeds 8192 bytes.")
+    except OSError as error:
+        raise SetupError("Cannot read the protected runtime key file; inspect its owner, permissions and symlink status locally.") from error
+
+
+def write_runtime_key(path: Path, value: str, *, replace: bool = False) -> None:
+    value = value.strip()
+    if not value or len(value.encode("utf-8")) > 8192 or any(c in value for c in "\r\n\x00"):
+        raise SetupError("Runtime key is empty, oversized or contains unsupported control characters.")
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    parent = path.parent.lstat()
+    if not stat.S_ISDIR(parent.st_mode) or parent.st_uid != os.geteuid() or parent.st_mode & 0o077:
+        raise SetupError("Use an owned 0700 credential directory, for example ${CONFIG_DIR}/.credentials.")
+    if path.is_symlink():
+        raise SetupError("Refusing a symbolic-link runtime key file.")
+    if replace and path.exists():
+        validate_runtime_key_file(path, allow_empty=True)
+    descriptor, name = tempfile.mkstemp(prefix=".runtime-key-", dir=path.parent)
+    temporary = Path(name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            os.fchmod(stream.fileno(), 0o600)
+            stream.write(value)
+            stream.flush()
+            os.fsync(stream.fileno())
+        if replace:
+            os.replace(temporary, path)
+        else:
+            os.link(temporary, path)
+    except FileExistsError as error:
+        raise SetupError("A runtime key is already saved. Use save-key --replace for deliberate rotation.") from error
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def baseline_environment() -> dict[str, str]:
@@ -313,6 +375,7 @@ def inspect_config(config: dict) -> dict:
         "tunnel_configured": bool(TUNNEL_ID.fullmatch(s.get("tunnel_id", ""))),
         "required_environment": sorted(set(s.get("env_from", {}).values()) | set(s.get("headers_from_env", {}).values())),
         "runtime_key_env": s.get("runtime_key_env", "OPENAI_TUNNEL_KEY"),
+        "runtime_key_file": s.get("runtime_key_file"),
     } for name, s in config["servers"].items()}}
 
 
@@ -771,7 +834,143 @@ def state_lock(data_dir: Path):
             fcntl.flock(stream, fcntl.LOCK_UN)
 
 
-def start(binary: Path, data_dir: Path, name: str, server: dict, config_path: Path, discovery: dict | None = None) -> dict:
+def runtime_authentication(server: dict, config_path: Path, data_dir: Path) -> tuple[str, dict]:
+    key_name = runtime_key_name(server)
+    key_file = runtime_key_path(server, config_path)
+    if key_file is not None and (key_file.exists() or key_file.is_symlink()):
+        validate_runtime_key_file(key_file)
+        return f"file:{key_file}", native_environment(data_dir, server)
+    runtime_key = os.environ.get(key_name, "")
+    if not runtime_key:
+        if not sys.stdin.isatty():
+            raise SetupError(f"Set {key_name} locally, save the configured runtime_key_file with save-key, or use an interactive terminal for hidden entry.")
+        note = "saved privately to runtime_key_file" if key_file is not None else "not saved"
+        runtime_key = getpass.getpass(f"OpenAI tunnel runtime key (hidden, {note}): ").strip()
+    if not runtime_key or any(c in runtime_key for c in "\r\n\x00"):
+        raise SetupError("Runtime key is empty or contains unsupported control characters.")
+    if key_file is not None:
+        write_runtime_key(key_file, runtime_key)
+        return f"file:{key_file}", native_environment(data_dir, server)
+    return f"env:{key_name}", native_environment(data_dir, server, runtime_key)
+
+
+def legacy_doctor(binary: Path, legacy: dict, key_reference: str, environment: dict,
+                  server: dict, config_path: Path) -> None:
+    profile = Path(legacy["profile"]).expanduser()
+    if not profile.is_file() or profile.is_symlink():
+        raise SetupError("Legacy handover needs the reviewed existing native profile file.")
+    if server["transport"] != "stdio":
+        raise SetupError("Legacy Python/flock handover supports stdio targets only.")
+    child = shlex.join([sys.executable, str(SCRIPT), "_stdio", "--config", str(config_path), "--server", legacy["server"]])
+    command = [str(binary), "doctor", "--profile-file", str(profile), "--explain",
+               "--control-plane.api-key", key_reference, "--mcp.command", child,
+               "--log.http-raw-unsafe=false"]
+    try:
+        result = subprocess.run(command, env=environment, capture_output=True, timeout=60)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise SetupError("Official doctor could not finish; the legacy runner has not been stopped.") from error
+    if result.returncode:
+        raise SetupError(f"Official doctor exited with code {result.returncode}; the legacy runner has not been stopped. Fix its configuration before retrying.")
+
+
+def legacy_lock_owner(path: Path) -> int | None:
+    info = path.stat()
+    expected = (os.major(info.st_dev), os.minor(info.st_dev), info.st_ino)
+    for line in Path("/proc/locks").read_text().splitlines():
+        fields = line.split()
+        if len(fields) < 6 or fields[1] != "FLOCK" or "->" in fields:
+            continue
+        try:
+            major, minor, inode = fields[5].split(":")
+            if (int(major, 16), int(minor, 16), int(inode)) == expected:
+                pid = int(fields[4])
+                return pid if pid > 0 else None
+        except (ValueError, IndexError):
+            continue
+    return None
+
+
+def legacy_process_identity(pid: int, script: Path) -> tuple:
+    proc = Path("/proc") / str(pid)
+    if proc.stat().st_uid != os.geteuid():
+        raise SetupError("The legacy lock belongs to another user; no process was signalled.")
+    argv = [os.fsdecode(value) for value in (proc / "cmdline").read_bytes().split(b"\x00") if value]
+    if not argv or not re.fullmatch(r"python(?:\d+(?:\.\d+)*)?", Path(argv[0]).name):
+        raise SetupError("The legacy lock owner is not the reviewed Python runner; no process was signalled.")
+    arguments = argv[1:]
+    while arguments and arguments[0] in ("-u", "-B", "-I", "-s", "-S", "-E"):
+        arguments = arguments[1:]
+    if not arguments or arguments[0].startswith("-"):
+        raise SetupError("The legacy runner arguments are unrecognized; no process was signalled.")
+    target = Path(arguments[0])
+    if not target.is_absolute():
+        target = Path(os.readlink(proc / "cwd")) / target
+    if target.resolve() != script.resolve():
+        raise SetupError("A different program owns the legacy lock; no process was signalled.")
+    started = (proc / "stat").read_text().rsplit(")", 1)[1].split()[19]
+    return tuple(argv), started
+
+
+def stop_legacy_runner(pid: int, script: Path) -> None:
+    if not hasattr(os, "pidfd_open") or not hasattr(signal, "pidfd_send_signal"):
+        raise SetupError("Automatic handover requires Linux pidfd support. Stop the original runner with Ctrl+C, then use start.")
+    descriptor = None
+    try:
+        before = legacy_process_identity(pid, script)
+        descriptor = os.pidfd_open(pid)
+        if legacy_process_identity(pid, script) != before:
+            raise SetupError("The legacy process changed identity; no signal was sent.")
+        signal.pidfd_send_signal(descriptor, signal.SIGINT)
+    except ProcessLookupError:
+        # A runner that exited by itself can release its lock normally.
+        return
+    except OSError as error:
+        raise SetupError(f"Cannot inspect/signal the legacy runner (errno={error.errno}); stop it with Ctrl+C and use start.") from error
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+
+@contextlib.contextmanager
+def legacy_guard(legacy: dict | None):
+    if legacy is None:
+        yield False
+        return
+    path = Path(legacy["lock_file"]).expanduser()
+    if not path.exists():
+        if path.is_symlink():
+            raise SetupError("Refusing a symbolic-link legacy lock.")
+        yield False
+        return
+    if path.is_symlink() or not path.is_file():
+        raise SetupError("Legacy handover needs the reviewed regular flock file.")
+    with path.open("rb") as stream:
+        transferred = False
+        try:
+            fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            owner = legacy_lock_owner(path)
+            if owner is None:
+                raise SetupError("The legacy runner holds its lock but is not visible here. Run handover on its host or stop the original with Ctrl+C.")
+            stop_legacy_runner(owner, Path(legacy["script"]).expanduser())
+            deadline = time.monotonic() + 20
+            while True:
+                try:
+                    fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    if time.monotonic() >= deadline:
+                        raise SetupError("The original runner did not release its lock; the new runtime was not started.")
+                    time.sleep(0.2)
+            transferred = True
+        try:
+            yield transferred
+        finally:
+            fcntl.flock(stream, fcntl.LOCK_UN)
+
+
+def start(binary: Path, data_dir: Path, name: str, server: dict, config_path: Path,
+          discovery: dict | None = None, legacy: dict | None = None) -> dict:
     tunnel_id = server.get("tunnel_id", "")
     if not TUNNEL_ID.fullmatch(tunnel_id):
         raise SetupError("Fill in a real tunnel_id created in OpenAI Platform and associated with the intended ChatGPT workspace.")
@@ -806,16 +1005,11 @@ def start(binary: Path, data_dir: Path, name: str, server: dict, config_path: Pa
             if contains_true(current, "process_running"):
                 return {"runtime": safe_status(current), "already_running": True, "chatgpt_end_to_end_verified": False}
         result = discovery if discovery is not None else probe(server, config_path)
-        key_name = runtime_key_name(server)
-        runtime_key = os.environ.get(key_name, "")
-        if not runtime_key:
-            if not sys.stdin.isatty():
-                raise SetupError(f"Set {key_name} locally, or run start in an interactive terminal for hidden entry.")
-            runtime_key = getpass.getpass("OpenAI tunnel runtime key (hidden, not saved): ").strip()
-        if not runtime_key or any(c in runtime_key for c in "\r\n\x00"):
-            raise SetupError("Runtime key is empty or contains unsupported control characters.")
-        env = native_environment(data_dir, server, runtime_key)
-        command = ["connect", "--alias", name, "--tunnel-id", tunnel_id, "--runtime-api-key", f"env:{key_name}",
+        key_reference, env = runtime_authentication(server, config_path, data_dir)
+        if legacy is not None:
+            legacy = dict(legacy, server=name)
+            legacy_doctor(binary, legacy, key_reference, env, server, config_path)
+        command = ["connect", "--alias", name, "--tunnel-id", tunnel_id, "--runtime-api-key", key_reference,
                    "--profile", name, "--profile-dir", str(data_dir / "profiles")]
         if server["transport"] == "stdio":
             child = shlex.join([sys.executable, str(SCRIPT), "_stdio", "--config", str(config_path), "--server", name])
@@ -826,14 +1020,15 @@ def start(binary: Path, data_dir: Path, name: str, server: dict, config_path: Pa
         # after starting a process, status/stop and a later retry still recognize it.
         intent = read_json(record_path) if record_path.exists() else {"identity": public_identity}
         write_json(record_path, intent, replace=record_path.exists())
-        connected = native_json(binary, command, env)
-        status = native_json(binary, ["status", name], env)
-        profile = find_string(status, "profile_path") or find_string(connected, "profile_path")
-        receipt = {"identity": public_identity}
-        if profile and Path(profile).is_file():
-            receipt.update(profile_path=profile, profile_sha256=file_sha256(Path(profile)))
-        write_json(record_path, receipt, replace=record_path.exists())
-        return {"local_discovery": result, "runtime": safe_status(status), "chatgpt_end_to_end_verified": False,
+        with legacy_guard(legacy) as transferred:
+            connected = native_json(binary, command, env)
+            status = native_json(binary, ["status", name], env)
+            profile = find_string(status, "profile_path") or find_string(connected, "profile_path")
+            receipt = {"identity": public_identity}
+            if profile and Path(profile).is_file():
+                receipt.update(profile_path=profile, profile_sha256=file_sha256(Path(profile)))
+            write_json(record_path, receipt, replace=record_path.exists())
+        return {"local_discovery": result, "runtime": safe_status(status), "legacy_runner_migrated": transferred, "chatgpt_end_to_end_verified": False,
                 "next_step": "Keep the local tool available. Add this tunnel in ChatGPT, review tools, and perform one intended read-only call. Use stop to stop the native background runtime."}
 
 
@@ -862,11 +1057,18 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--state-dir", help="Managed data directory (default: XDG_DATA_HOME/chatgpt-local-tools)")
     p.add_argument("--client", help="Explicit path to an already installed official tunnel-client")
     commands = p.add_subparsers(dest="action", required=True)
-    for action in ("inspect", "check", "start", "_stdio"):
+    for action in ("inspect", "check", "start", "_stdio", "save-key", "migrate-legacy"):
         sub = commands.add_parser(action, help="Internal MCP process entry point" if action == "_stdio" else None)
         sub.add_argument("--config", required=True)
         if action != "inspect":
             sub.add_argument("--server", required=True)
+        if action == "save-key":
+            sub.add_argument("--from-env", help="Read a key from this local environment variable instead of hidden input")
+            sub.add_argument("--replace", action="store_true", help="Deliberately replace an existing owned key file")
+        if action == "migrate-legacy":
+            sub.add_argument("--legacy-script", required=True, help="Reviewed original Python launcher path")
+            sub.add_argument("--legacy-lock", required=True, help="Original launcher's exclusive flock file")
+            sub.add_argument("--legacy-profile", required=True, help="Original native profile for official doctor")
     imported = commands.add_parser("import-mcp")
     imported.add_argument("--input", required=True)
     imported.add_argument("--output", required=True)
@@ -914,6 +1116,21 @@ def main(argv=None) -> int:
         say(inspect_config(config))
         return 0
     server = selected(config, args.server)
+    if args.action == "save-key":
+        path = runtime_key_path(server, config_path)
+        if path is None:
+            raise SetupError("Configure runtime_key_file before using save-key; environment-only mode does not save secrets.")
+        if args.from_env:
+            if not ENV_NAME.fullmatch(args.from_env):
+                raise SetupError("--from-env accepts an environment variable name, never a key value.")
+            value = credential(args.from_env)
+        else:
+            if not sys.stdin.isatty():
+                raise SetupError("Use a local terminal for hidden entry, or --from-env NAME for an existing local variable.")
+            value = getpass.getpass("OpenAI tunnel runtime key (hidden, saved privately): ")
+        write_runtime_key(path, value, replace=args.replace)
+        say({"runtime_key_saved": True, "runtime_key_file": str(path), "runtime_started": False})
+        return 0
     if args.action == "_stdio":
         if server["transport"] != "stdio":
             raise SetupError("Internal stdio entry point requires a stdio target.")
@@ -926,7 +1143,10 @@ def main(argv=None) -> int:
     if not TUNNEL_ID.fullmatch(server.get("tunnel_id", "")):
         raise SetupError("Fill in a real tunnel_id before start; check can be used without a tunnel ID.")
     binary = choose_client(args.client, data_dir, download=True)
-    say(start(binary, data_dir, args.server, server, config_path))
+    legacy = None
+    if args.action == "migrate-legacy":
+        legacy = {"script": args.legacy_script, "lock_file": args.legacy_lock, "profile": args.legacy_profile}
+    say(start(binary, data_dir, args.server, server, config_path, legacy=legacy))
     return 0
 
 

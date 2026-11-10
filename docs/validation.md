@@ -111,3 +111,27 @@ python3 tests/official_client_smoke.py --client "$local_tools_test_dir/bin/tunne
 The installer and native smoke download/run the official client and require ordinary
 loopback socket access. The native smoke uses temporary fixture state, not the
 user's existing runtime or accounts.
+
+## Shared credential reuse and legacy handover
+
+The shared launcher now implements the credential caching and reviewed process
+handover previously available only in a local LLM Wiki manager. The Skill routes
+ordinary new MCP/API/CLI connections through connection/adapter JSON and the
+same launcher, without generating another per-tool manager.
+
+`tests/test_reuse.py` adds cases for saved-key restart without input/environment,
+one-time hidden entry, explicit rotation, 0600/0700 ownership, symlink refusal,
+environment isolation, real kernel flock/pidfd handover, wrong-process refusal
+and doctor failure preserving the old runner. Its data is synthetic; private
+local configurations and real keys are not part of this repository.
+
+The official-client smoke uses a real file-backed fixture key, starts/stops the
+native runtime, then invokes `migrate-legacy` with a reviewed local Python/flock
+fixture and restarts without a key environment or terminal. The existing native
+profile is checked by the real official doctor before handover. The local dev
+proxy tool call remains separate from hosted ChatGPT acceptance.
+
+A saved-key LLM Wiki template has been added. CI validates all bundled examples.
+No existing user's local deployment, credential file or running process is
+changed merely by publishing this shared capability. Doctor is a configuration
+diagnostic, not proof of hosted authentication or a successful ChatGPT call.

@@ -7,6 +7,9 @@
 
 **已有 MCP 就直接复用；只有 API／CLI 时，先把明确的操作包装成 MCP，再接官方隧道。**
 
+每个新工具复用同一份启动器：已有 MCP 主要增加连接 JSON；普通 API／CLI 再增加适配器 JSON。
+保存密钥、启动 Node、后台运行、查看和停止都由共享命令完成，不需要为每个工具重写 Python 管理脚本。
+
 这是独立开源项目，不是 OpenAI／金山官方产品，不运营隧道服务，不承诺任何账号都有接入资格或隧道免费。
 发布在 GitHub 不等于上架 ChatGPT 应用目录。
 
@@ -90,6 +93,11 @@ python3 skills/connect-local-tools/scripts/connect.py status --server llm-wiki
 运行密钥需要 Tunnels Read + Use。若没有设置 `OPENAI_TUNNEL_KEY`，脚本会在本地终端隐藏输入。
 首次启动可以自动下载固定版本的官方客户端，校验 SHA-256 后再使用。
 
+需要记住密钥时，改用 `assets/llm-wiki-saved-key.connection.json` 示例。其 `runtime_key_file`
+会把首次隐藏输入或已有运行密钥环境变量保存到本机权限 `0600` 的私有文件，以后重启直接复用。
+这是本地明文文件，不是加密钥匙串。原环境变量模式仍可使用；显式更新密钥用共享 `save-key` 命令，
+详见[凭据配置](skills/connect-local-tools/references/configuration.md)。
+
 **通用版使用官方后台进程管理，关闭启动终端不会停止连接。停止请执行：**
 
 ```bash
@@ -162,4 +170,7 @@ python3 -m unittest discover -s tests -v
 测试使用本地服务、子进程和模拟官方 CLI，没有替代真实 ChatGPT／金山账号验证。
 另外，[CI 流程](.github/workflows/verify.yml) 会下载并校验真实官方客户端，实际测试后台生命周期，
 并经过官方本地内存隧道完成一次工具调用；这部分不使用真实 OpenAI 或厂商账号。
+
+替换早期前台 Python/flock 启动器时，可在核对原脚本、锁文件和官方 profile 后使用共享的
+`migrate-legacy` 命令，无需再写一个工具专属迁移脚本。见[迁移与启动说明](skills/connect-local-tools/references/migration.md)。
 详见 [验证记录](docs/validation.md)。原创代码和文档采用 MIT 协议；官方客户端与各厂商工具保留各自许可。

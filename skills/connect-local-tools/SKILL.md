@@ -34,6 +34,12 @@ Use Python 3.10+. Resolve script paths relative to this skill. Keep the complete
 skill and local config available while a runtime uses them; generated commands
 refer to absolute paths. Stop the runtime before moving these files.
 
+Reuse the shared scripts for every connection. An existing MCP needs connection
+JSON; an ordinary supported API/CLI needs adapter JSON plus connection JSON.
+Do not write a new per-tool manager just to remember keys, start Node, run in the
+background or manage status/stop. Write a dedicated MCP adapter only when the
+existing interfaces/configuration subset cannot express the requested operation.
+
 ```bash
 python3 scripts/connect.py import-mcp --input /absolute/mcp.json --output /absolute/connections.local.json
 python3 scripts/connect.py inspect --config /absolute/connections.local.json
@@ -85,6 +91,14 @@ Have the user enter the runtime key in a hidden local prompt or protected
 environment. Follow the host's existing permissions and complete authorized work
 without inventing new approval gates.
 
+Environment-only authentication remains the default. When the user requests
+saved credentials, configure `runtime_key_file`, for example
+`${CONFIG_DIR}/.credentials/wiki.key`. The first start can save hidden input or
+the configured runtime-key environment value; later starts reuse the file.
+Explain that this is a local plaintext file protected by ownership/0600
+permissions, not an encrypted keychain. Use the saved-key template in `assets/`;
+never put key values in JSON, command arguments or the public repository.
+
 ```bash
 python3 scripts/connect.py start --config /absolute/connections.local.json --server NAME
 python3 scripts/connect.py status --server NAME
@@ -95,6 +109,12 @@ python3 scripts/connect.py stop --server NAME
 does not stop it; use `stop`. Retain the config/skill and keep the host/upstream app
 available. State, profiles and logs live in the project's private data directory.
 Managed background operation does not install OS startup or restart services.
+
+For deliberate key replacement, use `scripts/connect.py save-key --config CONFIG
+--server NAME --replace`, then stop/start to apply it. For an existing foreground
+Python/flock tunnel launcher, read [migration.md](references/migration.md) and use
+the shared `migrate-legacy` command. Other supervisors need their own documented
+stop procedure; automatic handover is limited to the reviewed Python/flock case.
 
 Add the ChatGPT custom MCP connection when authorized and browser access permits.
 Otherwise deliver the exact remaining UI step. Never bypass a browser/account

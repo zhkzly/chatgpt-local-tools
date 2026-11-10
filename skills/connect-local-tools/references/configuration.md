@@ -51,6 +51,7 @@ if its environment variable is absent. Never use a key as the tunnel ID.
 | `url` | Fixed HTTP MCP endpoint, for HTTP transport. |
 | `headers_from_env` | HTTP header name to host environment name containing the full value. |
 | `runtime_key_env` | Host environment containing the tunnel key; default `OPENAI_TUNNEL_KEY`. |
+| `runtime_key_file` | Optional private key-file path. Existing files take precedence; a missing file is saved on first start from hidden input or `runtime_key_env`. |
 | `tunnel_id` | Existing associated OpenAI tunnel; empty is allowed until start. |
 | `timeout_seconds` | Bounded local discovery timeout. |
 
@@ -72,6 +73,41 @@ desktop keyring context) and only explicitly referenced credentials. An API/CLI
 adapter introduces a second process boundary: add a secret to the connection's
 `env_from` AND the adapter's `env_from`/`headers_from_env` if both need to receive it.
 Do not pass the tunnel key to the upstream tool.
+
+## Reuse credentials without a per-tool script
+
+If the user requests local credential persistence, add this non-secret reference:
+
+```json
+{"runtime_key_file": "${CONFIG_DIR}/.credentials/wiki.key"}
+```
+
+Relative key paths are based on the connection config directory. The shared
+launcher creates a private 0700 credential directory and a 0600 file. Existing
+key files must be owned by the user, regular files, 0600/0400 and not symlinks;
+their parent must not be writable by other users/groups. This is plaintext local
+storage, not an encrypted keychain. Only the `file:` reference is passed to the
+official client. The key is not forwarded to the MCP process.
+
+`start` reuses an existing file without another prompt. For a missing file, the
+configured runtime-key environment value is saved when available; otherwise a
+normal local terminal is needed for one hidden entry. `inspect`/`check` do not
+save keys. To save from an existing local environment explicitly, or rotate:
+
+```bash
+python3 scripts/connect.py save-key --config connections.local.json --server wiki --from-env OPENAI_TUNNEL_KEY
+python3 scripts/connect.py save-key --config connections.local.json --server wiki --replace
+```
+
+Without `--from-env`, `save-key` uses hidden terminal input. Existing files require
+explicit `--replace`. Key rotation does not restart a running runtime; stop/start
+with the same config to apply it. The Tunnel ID stays in the connection JSON, so
+neither it nor a saved key needs to be re-entered for ordinary restarts.
+
+Environment-only configs keep their original behavior and do not save a key.
+Changing an existing owned alias from environment mode to file mode changes its
+configuration revision; follow the stopped/new-alias procedure below. Keep an
+already working local deployment unchanged until that migration is planned.
 
 ## Import an existing MCP config
 

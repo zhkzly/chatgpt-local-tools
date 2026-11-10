@@ -24,6 +24,10 @@ The skill tells an agent **how** to work. API/CLI adapters expose **what** can b
 called. MCP supplies tool discovery and invocation. The tunnel supplies the
 network path. Installing a skill alone does not give ChatGPT access to a laptop.
 
+Each new tool reuses the same launcher: write connection JSON, plus adapter JSON
+when needed. You do not need another tool-specific Python manager for saved
+keys, Node startup, background operation, status or stop.
+
 ## Requirements and support
 
 - Python 3.10+; both scripts use the standard library only.
@@ -102,6 +106,13 @@ python3 skills/connect-local-tools/scripts/connect.py status --server llm-wiki
 If `OPENAI_TUNNEL_KEY` is absent, `start` prompts for it with hidden terminal input.
 It installs a missing official client, then starts the official **background**
 runtime. Closing this terminal is not a stop command.
+
+For saved credentials, use `assets/llm-wiki-saved-key.connection.json` instead.
+Its `runtime_key_file` saves the first hidden entry or runtime-key environment
+value to a private 0600 local file and reuses it after restarts. This is plaintext
+local storage, not an encrypted keychain. Environment-only configs remain
+available. Use the shared `save-key` command for deliberate rotation; see
+[credential configuration](skills/connect-local-tools/references/configuration.md).
 
 Add a custom MCP connection in ChatGPT using that tunnel, review the discovered
 tools and make one authorized read call. Local `ready` is not end-to-end proof.
@@ -192,6 +203,11 @@ for what was and was not exercised, and [CONTRIBUTING.md](CONTRIBUTING.md).
 The [CI workflow](.github/workflows/verify.yml) additionally downloads the checked
 official client and tests its real managed background lifecycle and a tool call
 through its local in-memory tunnel. No hosted OpenAI or vendor account is used.
+
+Replacing an older foreground Python/flock runner can use the shared
+`migrate-legacy` command after reviewing its script, lock and native profile.
+No per-tool migration script is required. See
+[migration and startup behavior](skills/connect-local-tools/references/migration.md).
 
 ## License and upstream projects
 

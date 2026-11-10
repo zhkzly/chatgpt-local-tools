@@ -48,7 +48,9 @@ process state, health URLs and logs. The launcher restricts new state permission
 and refuses to overwrite inconsistent/unowned connection configuration.
 
 Runtime key: configured `runtime_key_env`, default `OPENAI_TUNNEL_KEY`, or hidden
-local input. Profiles store environment references, not key literals. Declare
+local input. If the user requests persistence, configure `runtime_key_file` and
+reuse the shared launcher; see [configuration.md](configuration.md). Native
+profiles store environment/file references, not key literals. Declare
 tool credentials in `env_from` or `headers_from_env`; they are not inherited
 implicitly. HTTP MCP header environments contain the complete header value.
 
@@ -61,6 +63,10 @@ Run one active stdio client per tunnel ID. The launcher's checks cover its own
 state directory, not unrelated clients on other hosts. Stop before changing or
 moving the config/skill. Remove local data only after stopping aliases; cloud
 tunnels, ChatGPT links and runtime keys require separate deletion/revocation.
+
+An old foreground Python/flock launcher can be replaced with the shared
+`migrate-legacy` command after reviewing its exact script, lock and native
+profile. See [migration.md](migration.md). Ordinary new connections use `start`.
 
 References: [runtime flows](https://github.com/openai/tunnel-client/blob/v0.0.20/plugins/tunnel-mcp/skills/tunnel-mcp/references/runtime-flows.md),
 [configuration](https://github.com/openai/tunnel-client/blob/v0.0.20/docs/configuration.md),
