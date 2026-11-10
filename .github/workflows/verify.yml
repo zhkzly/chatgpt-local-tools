@@ -1,0 +1,61 @@
+name: Local protocol checks
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Check out the exact workflow commit
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+          SOURCE_REPOSITORY: ${{ github.repository }}
+        run: |
+          git init .
+          git remote add origin "https://github.com/${SOURCE_REPOSITORY}.git"
+          git fetch --no-tags --depth=1 origin "$SOURCE_SHA"
+          git checkout --detach FETCH_HEAD
+
+      - name: Run the complete offline regression suite
+        run: python3 -m unittest discover -s tests -v
+
+      - name: Follow the local demo validation and discovery steps
+        run: |
+          python3 skills/connect-local-tools/scripts/tool_adapter.py --config skills/connect-local-tools/assets/demo.adapter.json --check
+          python3 skills/connect-local-tools/scripts/connect.py check --config skills/connect-local-tools/assets/demo.connection.json --server demo
+          python3 skills/connect-local-tools/scripts/smoke_demo.py
+
+      - name: Validate every bundled configuration example
+        run: |
+          python3 - <<'PY'
+          import importlib.util
+          from pathlib import Path
+
+          root = Path('skills/connect-local-tools')
+          modules = {}
+          for name in ('connect', 'tool_adapter'):
+              spec = importlib.util.spec_from_file_location(name, root / 'scripts' / f'{name}.py')
+              module = importlib.util.module_from_spec(spec)
+              spec.loader.exec_module(module)
+              modules[name] = module
+          examples = sorted((root / 'assets').glob('*.json'))
+          for path in examples:
+              module = modules['tool_adapter' if path.name.endswith('.adapter.json') else 'connect']
+              module.load_config(path.resolve())
+              print(f'Validated {path}')
+          assert examples, 'No bundled examples were found'
+          print(f'Validated {len(examples)} examples')
+          PY
+
+      - name: Install and verify the pinned official client
+        run: python3 skills/connect-local-tools/scripts/connect.py --state-dir "$RUNNER_TEMP/official-client" install-client
+
+      - name: Verify real native background lifecycle and a local tunneled call
+        run: python3 tests/official_client_smoke.py --client "$RUNNER_TEMP/official-client/bin/tunnel-client-v0.0.20"

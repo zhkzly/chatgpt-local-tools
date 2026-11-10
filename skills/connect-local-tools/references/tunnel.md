@@ -25,6 +25,9 @@ python3 scripts/connect.py stop --server NAME
 and returns after starting a managed background process. Closing the launching
 terminal does not stop the process. Use `stop`; keep the host awake and upstream
 application running. Verify a real ChatGPT call after checking status.
+The native client detaches its process from the launching terminal and records
+process identity, health URL and log paths. This does not install a boot-time
+service or an OS supervisor to restart an exited tunnel process.
 
 The installer pins full `tunnel-client v0.0.20`, verifies SHA-256 and extracts only
 the executable. Automatic install supports Linux amd64/arm64. Python 3.10+ is

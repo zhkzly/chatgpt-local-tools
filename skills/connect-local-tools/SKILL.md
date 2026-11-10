@@ -59,6 +59,17 @@ This executes the MCP server, initializes it and lists tools, but calls no busin
 tools. Check the discovered operations against scope. Existing MCP tools are passed
 through unfiltered. Server startup can itself have side effects.
 
+For a credential-free local tool-call demonstration, run:
+
+```bash
+python3 scripts/smoke_demo.py
+```
+
+This uses the bundled [demo connection](assets/demo.connection.json) and
+[CLI adapter](assets/demo.adapter.json), performs initialization/discovery, then
+calls `echo_text` through the launcher's stdio wrapper and checks the exact result.
+It verifies a local tool call; it does not establish a tunnel or a ChatGPT connection.
+
 Check authentication through the tool's documented login/status flow. For personal
 KDocs use `kdocs-cli auth login` and `kdocs-cli auth status` locally. Do not extract
 browser cookies or expose commands that print credentials.
@@ -83,6 +94,7 @@ python3 scripts/connect.py stop --server NAME
 `start` uses the official managed background runtime. Closing the launching terminal
 does not stop it; use `stop`. Retain the config/skill and keep the host/upstream app
 available. State, profiles and logs live in the project's private data directory.
+Managed background operation does not install OS startup or restart services.
 
 Add the ChatGPT custom MCP connection when authorized and browser access permits.
 Otherwise deliver the exact remaining UI step. Never bypass a browser/account

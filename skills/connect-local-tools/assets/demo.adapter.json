@@ -10,7 +10,7 @@
       "command": [
         "python3",
         "-c",
-        "import sys; print(sys.argv[1])",
+        "import sys; sys.stdout.write(sys.argv[1])",
         "{text}"
       ],
       "inputSchema": {

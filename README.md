@@ -47,11 +47,13 @@ python3 skills/connect-local-tools/scripts/tool_adapter.py \
   --config skills/connect-local-tools/assets/demo.adapter.json --check
 python3 skills/connect-local-tools/scripts/connect.py check \
   --config skills/connect-local-tools/assets/demo.connection.json --server demo
+python3 skills/connect-local-tools/scripts/smoke_demo.py
 ```
 
-This validates configuration and performs real local MCP initialization/tool
-discovery against a harmless echo adapter. It does not call business tools or
-install/start the tunnel.
+The first two commands validate configuration and perform local MCP discovery.
+The final command actually calls the harmless `echo_text` tool through the
+launcher's stdio wrapper and checks its exact result. None starts a tunnel;
+this demonstration does not verify a ChatGPT connection.
 
 ## Install the Agent Skill
 

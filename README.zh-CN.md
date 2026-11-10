@@ -43,9 +43,11 @@ python3 skills/connect-local-tools/scripts/tool_adapter.py \
   --config skills/connect-local-tools/assets/demo.adapter.json --check
 python3 skills/connect-local-tools/scripts/connect.py check \
   --config skills/connect-local-tools/assets/demo.connection.json --server demo
+python3 skills/connect-local-tools/scripts/smoke_demo.py
 ```
 
-这两步只校验配置、执行本地 MCP 握手并发现工具；不会建立云端连接，也不调用业务工具。
+前两步校验配置、执行本地 MCP 握手并发现工具。最后一步会通过启动器的 stdio 包装入口
+实际调用无害的 `echo_text`，并核对结果与输入严格一致。这些命令不启动隧道，不能证明网页连接已成功。
 
 ## 作为 Agent Skill 安装
 
