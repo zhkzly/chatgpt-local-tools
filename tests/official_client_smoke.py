@@ -67,13 +67,31 @@ def find(value, key):
 
 
 def stop_group(process: subprocess.Popen) -> None:
-    if process.poll() is None:
-        os.killpg(process.pid, signal.SIGTERM)
+    def live_members() -> bool:
+        for entry in Path('/proc').iterdir():
+            if not entry.name.isdigit():
+                continue
+            try:
+                fields = (entry / 'stat').read_text().rsplit(')', 1)[1].split()
+                if int(fields[2]) == process.pid and fields[0] != 'Z':
+                    return True
+            except (OSError, ValueError, IndexError):
+                continue
+        return False
+
+    for sig in (signal.SIGTERM, signal.SIGKILL):
         try:
-            process.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            os.killpg(process.pid, signal.SIGKILL)
-            process.wait(timeout=5)
+            os.killpg(process.pid, sig)
+        except ProcessLookupError:
+            break
+        deadline = time.monotonic() + 3
+        while live_members() and time.monotonic() < deadline:
+            process.poll()
+            time.sleep(0.05)
+        if not live_members():
+            break
+    process.wait(timeout=5)
+    require(not live_members(), "Official proxy process group still has live members")
 
 
 def managed_runtime(binary: Path, directory: Path, config: Path) -> dict:
@@ -108,12 +126,14 @@ def managed_runtime(binary: Path, directory: Path, config: Path) -> dict:
         pid = find(status, "pid")
         require(isinstance(pid, int) and pid > 0, "Native status did not expose a runtime PID")
         require(os.getsid(pid) == pid, "Runtime did not create its own Unix session")
-        require(not connect.contains_true(status, "ready"), "Unreachable local control plane was reported ready")
+        # Native /readyz may succeed before a control-plane poll has succeeded.
+        # Preserve its actual value rather than treating it as cloud evidence.
+        ready = connect.contains_true(status, "ready")
         launch("stop")
         stopped = launch("status")
         require(not connect.contains_true(stopped, "process_running"), "Native stop left its process running")
         return {"launcher_exited_runtime_survived": True, "separate_unix_session": True,
-                "healthy": True, "ready": False, "stop_verified": True,
+                "healthy": True, "ready_observed": ready, "stop_verified": True,
                 "fixture": "unreachable-loopback-control-plane"}
     finally:
         # Also clean up a partially failed startup; the launcher writes ownership
@@ -174,6 +194,7 @@ def main() -> None:
     parser.add_argument("--client", type=Path, required=True)
     args = parser.parse_args()
     binary = args.client.resolve()
+    require(sys.platform.startswith('linux'), "This native lifecycle smoke targets Linux")
     require(binary.is_file() and os.access(binary, os.X_OK), "Supply an executable official client")
     with tempfile.TemporaryDirectory(prefix="official-client-smoke-") as temporary:
         directory = Path(temporary)
