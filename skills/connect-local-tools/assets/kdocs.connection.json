@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "servers": {
+    "kdocs": {
+      "transport": "stdio",
+      "command": "python3",
+      "args": [
+        "${SKILL_DIR}/scripts/tool_adapter.py",
+        "--config",
+        "${SKILL_DIR}/assets/kdocs-readonly.adapter.json"
+      ],
+      "tunnel_id": "",
+      "runtime_key_env": "OPENAI_TUNNEL_KEY"
+    }
+  }
+}

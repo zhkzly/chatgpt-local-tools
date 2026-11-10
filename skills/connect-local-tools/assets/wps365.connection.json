@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "servers": {
+    "wps365": {
+      "transport": "stdio",
+      "command": "wps365-cli",
+      "args": [
+        "mcp",
+        "serve"
+      ],
+      "tunnel_id": "",
+      "runtime_key_env": "OPENAI_TUNNEL_KEY"
+    }
+  }
+}

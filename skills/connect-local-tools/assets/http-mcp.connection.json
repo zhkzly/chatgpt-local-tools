@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "servers": {
+    "http-mcp": {
+      "transport": "http",
+      "url": "http://127.0.0.1:3001/mcp",
+      "tunnel_id": "",
+      "runtime_key_env": "OPENAI_TUNNEL_KEY"
+    }
+  }
+}

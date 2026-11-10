@@ -1,0 +1,4 @@
+interface:
+  display_name: "Connect Local Tools"
+  short_description: "Connect local MCP, APIs and CLIs to ChatGPT"
+  default_prompt: "Use $connect-local-tools to connect my local MCP server, HTTP API, or CLI to ChatGPT and verify a real tool call."

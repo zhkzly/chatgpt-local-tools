@@ -1,0 +1,147 @@
+{
+  "version": 1,
+  "name": "personal-kdocs-readonly",
+  "tools": [
+    {
+      "name": "kdocs_search",
+      "description": "Search accessible personal KDocs documents. Returns at most the first 10 results; inspect business errors and pagination.",
+      "kind": "cli",
+      "read_only": true,
+      "command": [
+        "kdocs-cli",
+        "drive",
+        "search-files",
+        "--keyword",
+        "{query}",
+        "--type",
+        "all",
+        "--page-size",
+        "10"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "additionalProperties": false
+      },
+      "timeout_seconds": 45,
+      "max_output_bytes": 262144
+    },
+    {
+      "name": "kdocs_list_my_files",
+      "description": "List the first 10 entries of the authenticated personal KDocs root; this is not a complete drive listing.",
+      "kind": "cli",
+      "read_only": true,
+      "command": [
+        "kdocs-cli",
+        "drive",
+        "list-my-files",
+        "--page-size",
+        "10"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "timeout_seconds": 45,
+      "max_output_bytes": 262144
+    },
+    {
+      "name": "kdocs_list_star_items",
+      "description": "List the first 10 starred personal KDocs items. A clipped webpage may be a normal file instead of a starred item.",
+      "kind": "cli",
+      "read_only": true,
+      "command": [
+        "kdocs-cli",
+        "drive",
+        "list-star-items",
+        "--page-size",
+        "10"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "timeout_seconds": 45,
+      "max_output_bytes": 262144
+    },
+    {
+      "name": "kdocs_read_file",
+      "description": "Read an authorized personal KDocs document using its exact URL. On pending, preserve the returned task_id and use kdocs_poll_read_file. Honor partial-read warnings and permission errors.",
+      "kind": "cli",
+      "read_only": true,
+      "command": [
+        "kdocs-cli",
+        "drive",
+        "read-file",
+        "--url",
+        "{url}"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4000
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "additionalProperties": false
+      },
+      "timeout_seconds": 45,
+      "max_output_bytes": 262144
+    },
+    {
+      "name": "kdocs_poll_read_file",
+      "description": "Continue a pending KDocs read using the original URL and the exact task_id from that read response. Do not guess task IDs or retry a completed task.",
+      "kind": "cli",
+      "read_only": true,
+      "command": [
+        "kdocs-cli",
+        "drive",
+        "read-file",
+        "--url",
+        "{url}",
+        "--task-id",
+        "{task_id}"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4000
+          },
+          "task_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          }
+        },
+        "required": [
+          "url",
+          "task_id"
+        ],
+        "additionalProperties": false
+      },
+      "timeout_seconds": 45,
+      "max_output_bytes": 262144
+    }
+  ]
+}

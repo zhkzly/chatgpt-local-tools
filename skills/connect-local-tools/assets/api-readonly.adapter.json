@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "name": "local-notes-api",
+  "tools": [
+    {
+      "name": "search_notes",
+      "description": "Search the configured local notes API; this is a template endpoint that must match your actual service.",
+      "kind": "http",
+      "read_only": true,
+      "url": "http://127.0.0.1:9000/search",
+      "method": "GET",
+      "query": {
+        "q": "{query}"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "additionalProperties": false
+      },
+      "timeout_seconds": 20,
+      "max_output_bytes": 131072
+    }
+  ]
+}
