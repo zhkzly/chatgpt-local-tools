@@ -160,4 +160,6 @@ python3 -m unittest discover -s tests -v
 ```
 
 测试使用本地服务、子进程和模拟官方 CLI，没有替代真实 ChatGPT／金山账号验证。
+另外，[CI 流程](.github/workflows/verify.yml) 会下载并校验真实官方客户端，实际测试后台生命周期，
+并经过官方本地内存隧道完成一次工具调用；这部分不使用真实 OpenAI 或厂商账号。
 详见 [验证记录](docs/validation.md)。原创代码和文档采用 MIT 协议；官方客户端与各厂商工具保留各自许可。

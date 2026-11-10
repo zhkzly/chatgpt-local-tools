@@ -189,6 +189,10 @@ Tests use local fixtures and a mock official CLI. They verify implementation
 boundaries, not live OpenAI access or billing. See [validation](docs/validation.md)
 for what was and was not exercised, and [CONTRIBUTING.md](CONTRIBUTING.md).
 
+The [CI workflow](.github/workflows/verify.yml) additionally downloads the checked
+official client and tests its real managed background lifecycle and a tool call
+through its local in-memory tunnel. No hosted OpenAI or vendor account is used.
+
 ## License and upstream projects
 
 MIT for original code and documentation in this repository. The separately
