@@ -45,13 +45,17 @@ overriding the key reference and MCP command with the clean new stdio wrapper.
 hosted control-plane poll or prove a successful ChatGPT call.
 
 For a held lock, handover checks its actual kernel owner, same-user ownership,
-Python executable, exact script path and process start identity, then sends
+the executable inode via `/proc/PID/exe`, exact script path and process start identity, then sends
 SIGINT through Linux pidfd. It waits up to 20 seconds for the old runner to release
 the lock and holds that lock during native startup. Missing credentials, failed
 local discovery/doctor or an unrecognized owner leave the old process untouched.
 It does not force-kill unknown processes. With the old process stopped, ordinary
 native startup can still fail; inspect `status` and logs rather than claiming
 automatic rollback or end-to-end success.
+
+The reviewed interpreter defaults to the Python running this launcher. If the
+original uses a different interpreter, supply its reviewed absolute path with
+`--legacy-python`. A Python-looking `argv[0]` alone is not accepted as proof.
 
 If the original process is hidden by a sandbox, run handover on that host. For
 another supervisor, unsupported Python invocation or missing pidfd support, use

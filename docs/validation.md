@@ -125,6 +125,12 @@ environment isolation, real kernel flock/pidfd handover, wrong-process refusal
 and doctor failure preserving the old runner. Its data is synthetic; private
 local configurations and real keys are not part of this repository.
 
+Independent review reproduced an unrelated executable pretending to be Python in
+argv and a 0700 key file being accepted despite the documented permission modes.
+Regression cases now require the actual reviewed interpreter inode to match,
+reject that spoofed process without signalling it, reject 0700 keys and retain
+support for 0400 read-only keys.
+
 The official-client smoke uses a real file-backed fixture key, starts/stops the
 native runtime, then invokes `migrate-legacy` with a reviewed local Python/flock
 fixture and restarts without a key environment or terminal. The existing native

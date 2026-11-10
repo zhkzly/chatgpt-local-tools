@@ -279,7 +279,7 @@ def validate_runtime_key_file(path: Path, *, allow_empty: bool = False) -> None:
         fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
         with os.fdopen(fd, "rb") as stream:
             info = os.fstat(stream.fileno())
-            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o077:
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) not in (0o600, 0o400):
                 raise SetupError("The runtime key must be an owned regular file with permissions 0600 or 0400.")
             if info.st_size > 8192 or (not allow_empty and info.st_size == 0):
                 raise SetupError("The runtime key file is empty or exceeds 8192 bytes.")
@@ -293,7 +293,7 @@ def write_runtime_key(path: Path, value: str, *, replace: bool = False) -> None:
         raise SetupError("Runtime key is empty, oversized or contains unsupported control characters.")
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     parent = path.parent.lstat()
-    if not stat.S_ISDIR(parent.st_mode) or parent.st_uid != os.geteuid() or parent.st_mode & 0o077:
+    if not stat.S_ISDIR(parent.st_mode) or parent.st_uid != os.geteuid() or stat.S_IMODE(parent.st_mode) != 0o700:
         raise SetupError("Use an owned 0700 credential directory, for example ${CONFIG_DIR}/.credentials.")
     if path.is_symlink():
         raise SetupError("Refusing a symbolic-link runtime key file.")
@@ -890,10 +890,14 @@ def legacy_lock_owner(path: Path) -> int | None:
     return None
 
 
-def legacy_process_identity(pid: int, script: Path) -> tuple:
+def legacy_process_identity(pid: int, script: Path, python_executable: str | None = None) -> tuple:
     proc = Path("/proc") / str(pid)
     if proc.stat().st_uid != os.geteuid():
         raise SetupError("The legacy lock belongs to another user; no process was signalled.")
+    interpreter = Path(python_executable or sys.executable).expanduser()
+    if not os.path.samefile(proc / "exe", interpreter):
+        raise SetupError("The legacy executable does not match the reviewed Python interpreter. Use --legacy-python for that reviewed interpreter or stop the old runner manually; no signal was sent.")
+    executable = (proc / "exe").stat()
     argv = [os.fsdecode(value) for value in (proc / "cmdline").read_bytes().split(b"\x00") if value]
     if not argv or not re.fullmatch(r"python(?:\d+(?:\.\d+)*)?", Path(argv[0]).name):
         raise SetupError("The legacy lock owner is not the reviewed Python runner; no process was signalled.")
@@ -908,17 +912,17 @@ def legacy_process_identity(pid: int, script: Path) -> tuple:
     if target.resolve() != script.resolve():
         raise SetupError("A different program owns the legacy lock; no process was signalled.")
     started = (proc / "stat").read_text().rsplit(")", 1)[1].split()[19]
-    return tuple(argv), started
+    return tuple(argv), started, executable.st_dev, executable.st_ino
 
 
-def stop_legacy_runner(pid: int, script: Path) -> None:
+def stop_legacy_runner(pid: int, script: Path, python_executable: str | None = None) -> None:
     if not hasattr(os, "pidfd_open") or not hasattr(signal, "pidfd_send_signal"):
         raise SetupError("Automatic handover requires Linux pidfd support. Stop the original runner with Ctrl+C, then use start.")
     descriptor = None
     try:
-        before = legacy_process_identity(pid, script)
+        before = legacy_process_identity(pid, script, python_executable)
         descriptor = os.pidfd_open(pid)
-        if legacy_process_identity(pid, script) != before:
+        if legacy_process_identity(pid, script, python_executable) != before:
             raise SetupError("The legacy process changed identity; no signal was sent.")
         signal.pidfd_send_signal(descriptor, signal.SIGINT)
     except ProcessLookupError:
@@ -952,7 +956,7 @@ def legacy_guard(legacy: dict | None):
             owner = legacy_lock_owner(path)
             if owner is None:
                 raise SetupError("The legacy runner holds its lock but is not visible here. Run handover on its host or stop the original with Ctrl+C.")
-            stop_legacy_runner(owner, Path(legacy["script"]).expanduser())
+            stop_legacy_runner(owner, Path(legacy["script"]).expanduser(), legacy.get("python_executable"))
             deadline = time.monotonic() + 20
             while True:
                 try:
@@ -1069,6 +1073,7 @@ def parser() -> argparse.ArgumentParser:
             sub.add_argument("--legacy-script", required=True, help="Reviewed original Python launcher path")
             sub.add_argument("--legacy-lock", required=True, help="Original launcher's exclusive flock file")
             sub.add_argument("--legacy-profile", required=True, help="Original native profile for official doctor")
+            sub.add_argument("--legacy-python", help="Reviewed original Python interpreter; default is this launcher's interpreter")
     imported = commands.add_parser("import-mcp")
     imported.add_argument("--input", required=True)
     imported.add_argument("--output", required=True)
@@ -1145,7 +1150,8 @@ def main(argv=None) -> int:
     binary = choose_client(args.client, data_dir, download=True)
     legacy = None
     if args.action == "migrate-legacy":
-        legacy = {"script": args.legacy_script, "lock_file": args.legacy_lock, "profile": args.legacy_profile}
+        legacy = {"script": args.legacy_script, "lock_file": args.legacy_lock, "profile": args.legacy_profile,
+                  "python_executable": args.legacy_python}
     say(start(binary, data_dir, args.server, server, config_path, legacy=legacy))
     return 0
 

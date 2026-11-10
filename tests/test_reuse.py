@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import select
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -119,9 +120,10 @@ class ReuseTests(unittest.TestCase):
 
     def test_insecure_key_and_symlinks_are_rejected_without_connecting(self):
         connect.write_runtime_key(self.key, 'stored-fixture-key')
-        self.key.chmod(0o644)
-        with self.assertRaises(connect.SetupError):
-            connect.start(self.client, self.data, 'fixture', self.server, self.config_path)
+        for permissions in (0o644, 0o700):
+            self.key.chmod(permissions)
+            with self.subTest(permissions=oct(permissions)), self.assertRaises(connect.SetupError):
+                connect.start(self.client, self.data, 'fixture', self.server, self.config_path)
         self.key.chmod(0o600)
         target = self.key.with_name('target.key')
         self.key.rename(target)
@@ -133,6 +135,12 @@ class ReuseTests(unittest.TestCase):
         calls = [json.loads(line) for line in (self.data / 'state/calls.jsonl').read_text().splitlines()]
         self.assertTrue(all(call['argv'][1] != 'connect' for call in calls))
         self.assertEqual(target.read_text(), 'stored-fixture-key')
+
+    def test_readonly_saved_key_can_be_reused(self):
+        connect.write_runtime_key(self.key, 'stored-fixture-key')
+        self.key.chmod(0o400)
+        started = connect.start(self.client, self.data, 'fixture', self.server, self.config_path)
+        self.assertTrue(started['runtime']['process_running'])
 
     def test_file_field_rejects_malformed_paths_and_tool_key_forwarding(self):
         for value in ('', 123, 'bad\x00path'):
@@ -179,6 +187,33 @@ class ReuseTests(unittest.TestCase):
         self.assertIsNone(process.poll())
         calls = [json.loads(line) for line in (self.data / 'state/calls.jsonl').read_text().splitlines()]
         self.assertTrue(all(call['argv'][1] != 'connect' for call in calls))
+
+    @unittest.skipUnless(sys.platform.startswith('linux') and shutil.which('tail'), 'Requires Linux/coreutils')
+    def test_spoofed_python_argv_is_not_accepted_as_the_interpreter(self):
+        script = self.root / 'reviewed old runner.py'
+        script.write_text('import time\ntime.sleep(60)\n')
+        lock = self.root / 'spoof.lock'
+        tail = shutil.which('tail')
+        bootstrap = "import fcntl,os,sys; f=open(sys.argv[1],'w'); fcntl.flock(f,fcntl.LOCK_EX); os.set_inheritable(f.fileno(),True); os.execv(sys.argv[2],['python3',sys.argv[3],'-f'])"
+        process = subprocess.Popen([sys.executable, '-c', bootstrap, str(lock), tail, str(script)],
+                                   stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            deadline = fixtures.time.monotonic() + 3
+            while True:
+                self.assertIsNone(process.poll())
+                if Path(os.readlink(f'/proc/{process.pid}/exe')).name == Path(tail).name:
+                    break
+                self.assertLess(fixtures.time.monotonic(), deadline)
+                fixtures.time.sleep(0.01)
+            self.assertEqual(connect.legacy_lock_owner(lock), process.pid)
+            with self.assertRaises(connect.SetupError):
+                with connect.legacy_guard({'script': str(script), 'lock_file': str(lock)}):
+                    pass
+            self.assertIsNone(process.poll(), 'The unrelated executable must not be signalled')
+        finally:
+            if process.poll() is None:
+                process.terminate()
+            process.wait(timeout=3)
 
     def test_doctor_uses_a_reference_and_the_clean_new_stdio_wrapper(self):
         profile = self.root / 'legacy.yaml'
