@@ -52,6 +52,7 @@ if its environment variable is absent. Never use a key as the tunnel ID.
 | `headers_from_env` | HTTP header name to host environment name containing the full value. |
 | `runtime_key_env` | Host environment containing the tunnel key; default `OPENAI_TUNNEL_KEY`. |
 | `runtime_key_file` | Optional private key-file path. Existing files take precedence; a missing file is saved on first start from hidden input or `runtime_key_env`. |
+| `stdio_send_initialized_notification` | Optional stdio-only boolean enabling the official initialized-notification shim; otherwise the official default is retained. |
 | `tunnel_id` | Existing associated OpenAI tunnel; empty is allowed until start. |
 | `timeout_seconds` | Bounded local discovery timeout. |
 
@@ -108,6 +109,28 @@ Environment-only configs keep their original behavior and do not save a key.
 Changing an existing owned alias from environment mode to file mode changes its
 configuration revision; follow the stopped/new-alias procedure below. Keep an
 already working local deployment unchanged until that migration is planned.
+
+## Initialized-notification compatibility
+
+The normal legacy MCP sequence is `initialize`, a successful response,
+`notifications/initialized`, then discovery/tool calls. For a caller that misses
+the notification, a stdio connection can opt in to:
+
+```json
+{"stdio_send_initialized_notification": true}
+```
+
+The launcher sets the official `MCP_STDIO_SEND_INITIALIZED_NOTIFICATION` setting
+for the tunnel client, not for the upstream process. The official client sends
+the notification after a successful legacy initialize response and suppresses a
+later duplicate notification from the caller. It still requires initialize.
+After restarting a client whose caller cached old tool metadata, refresh the
+existing connection's tool discovery rather than changing local health ports.
+
+Default/unrelated connections retain their existing behavior. LLM Wiki examples
+enable this supported compatibility behavior. An HTTP MCP connection cannot set
+this stdio option. First rule out multiple active clients sharing the same stdio
+Tunnel ID: a shim does not merge their independent protocol state.
 
 ## Import an existing MCP config
 

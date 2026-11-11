@@ -107,6 +107,14 @@ If `OPENAI_TUNNEL_KEY` is absent, `start` prompts for it with hidden terminal in
 It installs a missing official client, then starts the official **background**
 runtime. Closing this terminal is not a stop command.
 
+Use one launcher/state directory and one active client per stdio Tunnel ID.
+Repeated unchanged `start` reuses its managed process. Closing/reopening the
+desktop Wiki app does not require another tunnel; wait for its API. A detached
+old client can outlive the old Python lock, so retire the old entry point when
+switching launchers. Migration now refuses a matching surviving old profile.
+The LLM Wiki templates enable the official initialized-notification shim for
+legacy caller compatibility; this does not replace single-client deployment.
+
 For saved credentials, use `assets/llm-wiki-saved-key.connection.json` instead.
 Its `runtime_key_file` saves the first hidden entry or runtime-key environment
 value to a private 0600 local file and reuses it after restarts. This is plaintext

@@ -63,6 +63,7 @@ RESERVED_RUNTIME_NAMES = {"ENV", "IFS", "CDPATH", "SHELLOPTS", "BASHOPTS"}
 SERVER_KEYS = {
     "transport", "command", "args", "cwd", "env", "env_from", "url", "headers_from_env",
     "tunnel_id", "runtime_key_env", "runtime_key_file", "timeout_seconds",
+    "stdio_send_initialized_notification",
 }
 RESERVED_HEADERS = {"host", "content-length", "content-type", "accept", "mcp-session-id", "mcp-protocol-version", "proxy-authorization"}
 SCRIPT = Path(__file__).resolve()
@@ -198,6 +199,9 @@ def validate_config(config: dict) -> dict:
         transport = server.get("transport")
         if transport not in ("stdio", "http"):
             raise SetupError("transport must be stdio or http; a REST API or ordinary CLI requires an MCP adapter first.")
+        if "stdio_send_initialized_notification" in server:
+            if transport != "stdio" or type(server["stdio_send_initialized_notification"]) is not bool:
+                raise SetupError("stdio_send_initialized_notification must be a boolean on a stdio connection.")
         if transport == "stdio":
             command = server.get("command")
             args = server.get("args", [])
@@ -376,6 +380,7 @@ def inspect_config(config: dict) -> dict:
         "required_environment": sorted(set(s.get("env_from", {}).values()) | set(s.get("headers_from_env", {}).values())),
         "runtime_key_env": s.get("runtime_key_env", "OPENAI_TUNNEL_KEY"),
         "runtime_key_file": s.get("runtime_key_file"),
+        "stdio_send_initialized_notification": s.get("stdio_send_initialized_notification", False),
     } for name, s in config["servers"].items()}}
 
 
@@ -758,6 +763,8 @@ def native_environment(data_dir: Path, server: dict | None = None, runtime_key: 
     env.update({"TUNNEL_CLIENT_STATE_DIR": str(data_dir / "state"), "TUNNEL_CLIENT_PROFILE_DIR": str(data_dir / "profiles"),
                 "LOG_HTTP_RAW_UNSAFE": "false", "HEALTH_LISTEN_ADDR": "127.0.0.1:0"})
     if server:
+        if "stdio_send_initialized_notification" in server:
+            env["MCP_STDIO_SEND_INITIALIZED_NOTIFICATION"] = str(server["stdio_send_initialized_notification"]).lower()
         for source in set(server.get("env_from", {}).values()) | set(server.get("headers_from_env", {}).values()):
             env[source] = credential(source)
         if runtime_key is not None:
@@ -935,6 +942,61 @@ def stop_legacy_runner(pid: int, script: Path, python_executable: str | None = N
             os.close(descriptor)
 
 
+def legacy_profile_client_pids(profile: Path) -> list[int]:
+    """Conservative conflict detection, never authority to signal a process.
+
+    A released Python flock does not prove its separately detached client exited.
+    Inspect only this user's client-shaped commands for the exact reviewed
+    profile. Run on the client host; a sandbox inventory is not a host inventory.
+    """
+    if not sys.platform.startswith("linux") or not Path("/proc").is_dir():
+        raise SetupError("Legacy client inventory requires its Linux host; stop the old runtime there before using start.")
+    expected = profile.expanduser().resolve()
+    conflicts = []
+    def option(argv: list[str], flag: str) -> str | None:
+        for index, value in enumerate(argv):
+            if value.startswith(flag + "="):
+                return value.split("=", 1)[1]
+            if value == flag and index + 1 < len(argv):
+                return argv[index + 1]
+        return None
+    for proc in Path("/proc").iterdir():
+        if not proc.name.isdigit():
+            continue
+        try:
+            if proc.stat().st_uid != os.geteuid():
+                continue
+            if not (proc / "comm").read_text().strip().startswith("tunnel-client"):
+                continue
+            argv = [os.fsdecode(x) for x in (proc / "cmdline").read_bytes().split(b"\x00") if x]
+            if len(argv) < 2 or argv[1] != "run":
+                continue
+            direct = option(argv, "--profile-file") or option(argv, "--config")
+            if direct:
+                candidate = Path(direct).expanduser()
+            else:
+                name, directory = option(argv, "--profile"), option(argv, "--profile-dir")
+                if not name or not directory:
+                    continue
+                candidate = Path(directory).expanduser() / (name + ".yaml")
+            if not candidate.is_absolute():
+                candidate = Path(os.readlink(proc / "cwd")) / candidate
+            if candidate.resolve() == expected:
+                conflicts.append(int(proc.name))
+        except (OSError, ValueError):
+            continue
+    return sorted(conflicts)
+
+
+def ensure_no_legacy_clients(legacy: dict) -> None:
+    if not legacy.get("profile"):
+        return
+    conflicts = legacy_profile_client_pids(Path(legacy["profile"]))
+    if conflicts:
+        raise SetupError("Legacy tunnel client PID(s) " + ", ".join(map(str, conflicts)) +
+                         " still use the reviewed profile, even though its Python lock is free. Stop the reviewed old client gracefully on its host, then retry; the new runtime was not started.")
+
+
 @contextlib.contextmanager
 def legacy_guard(legacy: dict | None):
     if legacy is None:
@@ -944,6 +1006,7 @@ def legacy_guard(legacy: dict | None):
     if not path.exists():
         if path.is_symlink():
             raise SetupError("Refusing a symbolic-link legacy lock.")
+        ensure_no_legacy_clients(legacy)
         yield False
         return
     if path.is_symlink() or not path.is_file():
@@ -968,6 +1031,7 @@ def legacy_guard(legacy: dict | None):
                     time.sleep(0.2)
             transferred = True
         try:
+            ensure_no_legacy_clients(legacy)
             yield transferred
         finally:
             fcntl.flock(stream, fcntl.LOCK_UN)

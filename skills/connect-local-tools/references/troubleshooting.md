@@ -13,6 +13,8 @@
 | `mcp_initialization_required` / `-32002` | Have the calling MCP client initialize and rediscover the current server. Check for an MCP child restart or overlapping runtimes on the same tunnel; neither is established by this error alone. A separate local preflight initializes a separate process, not the live cloud session. |
 | Alias/config conflict | Inspect status/list and stop the old runtime before changing targets. |
 | Same tunnel ID running | Reuse/stop it or use a separate ID for an independent server. |
+| Intermittent initialization errors across tools | Inventory every active poller and its exact profile on the host. An orphaned old client can survive its Python lock and split handshake/calls across independent MCP sessions. Remove only the reviewed duplicate, then retest sequentially. |
+| Successful initialize but missing initialized notification | With one active stdio client, consider `stdio_send_initialized_notification: true`; restart and refresh discovery. This shim does not send initialize itself. |
 | KDocs login stalls | Confirm personal versus enterprise account and use official login. |
 | KDocs returns pending | Poll with the returned task ID and original file locator. |
 | CLI returns error JSON with exit 0 | Honor its business error, not merely process exit status. |

@@ -53,6 +53,15 @@ It does not force-kill unknown processes. With the old process stopped, ordinary
 native startup can still fail; inspect `status` and logs rather than claiming
 automatic rollback or end-to-end success.
 
+A free or missing Python lock is not proof that the native client stopped. Before
+starting the replacement, handover also checks this user's standard
+`tunnel-client run` invocations for the exact reviewed native profile, using
+explicit `--profile`/`--profile-dir`, `--profile-file` or `--config` arguments.
+An orphaned matching client causes a refusal with its PID; conflict detection
+does not authorize signalling it. Review the process and stop that old client
+gracefully, then retry. Unrelated profiles are left alone. This check must run on
+the actual host; a sandbox's process list cannot establish host-wide absence.
+
 The reviewed interpreter defaults to the Python running this launcher. If the
 original uses a different interpreter, supply its reviewed absolute path with
 `--legacy-python`. A Python-looking `argv[0]` alone is not accepted as proof.
@@ -72,3 +81,10 @@ systemd service, boot-time startup or an OS crash-restart supervisor. Configure
 those separately only when requested. The host and upstream desktop tool must
 remain available. Complete one real ChatGPT read call before reporting the full
 connection verified.
+
+Use one persistent entry point. Repeating the same unchanged shared `start` is
+idempotent; running a second old/new launcher or a different state directory can
+bypass that local ownership record. Archive the superseded entry point or make
+it delegate to the shared launcher. Closing the desktop app affects its API;
+closing the launching terminal does not stop the managed tunnel. Stop the tunnel
+explicitly when desired, and wait for the app's API when reopening the app.

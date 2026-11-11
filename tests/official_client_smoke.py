@@ -22,6 +22,8 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.error
+import urllib.request
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -170,10 +172,13 @@ def managed_runtime(binary: Path, directory: Path, config: Path) -> dict:
             launch("stop")
 
 
-def tunneled_call(binary: Path, directory: Path, config: Path) -> dict:
+def tunneled_call(binary: Path, directory: Path, config: Path, *, send_initialized: bool = True,
+                  expect_initialization_error: bool = False) -> dict:
+    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
     connection_file = directory / "proxy.json"
     command = shlex.join([sys.executable, str(SCRIPT), "_stdio", "--config", str(config), "--server", "demo"])
-    environment = connect.baseline_environment()
+    server = connect.selected(connect.load_config(config), 'demo')
+    environment = connect.native_environment(directory / 'native', server)
     environment.update(NO_PROXY="127.0.0.1", no_proxy="127.0.0.1")
     with (directory / "proxy.log").open("wb") as log:
         process = subprocess.Popen([str(binary), "dev", "proxy", "--backend", "go",
@@ -202,7 +207,32 @@ def tunneled_call(binary: Path, directory: Path, config: Path) -> dict:
             initialized = request(1, "initialize", {"protocolVersion": "2024-11-05", "capabilities": {},
                                                     "clientInfo": {"name": "official-local-smoke", "version": "1"}})
             transport.protocol = initialized["protocolVersion"]
-            transport.exchange({"jsonrpc": "2.0", "method": "notifications/initialized"})
+            if send_initialized:
+                transport.exchange({"jsonrpc": "2.0", "method": "notifications/initialized"})
+            if expect_initialization_error:
+                headers = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream",
+                           "MCP-Protocol-Version": transport.protocol}
+                if transport.session:
+                    headers['Mcp-Session-Id'] = transport.session
+                request_body = {'jsonrpc': '2.0', 'id': 2, 'method': 'tools/list', 'params': {}}
+                outgoing = urllib.request.Request(url, data=json.dumps(request_body).encode(), headers=headers, method='POST')
+                try:
+                    with transport.opener.open(outgoing, timeout=15) as response:
+                        status, raw = response.status, response.read(connect.MAX_MESSAGE + 1)
+                except urllib.error.HTTPError as error:
+                    status, raw = error.code, error.read(connect.MAX_MESSAGE + 1)
+                    error.close()
+                require(len(raw) <= connect.MAX_MESSAGE, 'Initialization error exceeded its limit')
+                if raw.lstrip().startswith(b'{'):
+                    rejected = json.loads(raw)
+                else:
+                    rejected = json.loads(next(line[5:].strip() for line in raw.splitlines() if line.startswith(b'data:')))
+                error = rejected.get('error', {})
+                require(rejected.get('id') == 2 and error.get('code') == -32002 and
+                        error.get('data', {}).get('origin') == 'tunnel-client',
+                        'Omitted notification did not reproduce the native initialization gate')
+                return {'omitted_notification_rejected': True, 'http_status': status,
+                        'error_type': error['data'].get('error_type')}
             tools = request(2, "tools/list", {})
             require([tool["name"] for tool in tools["tools"]] == ["echo_text"], "Unexpected tunneled tools")
             text = "Real official tunnel: 中文 'quotes' ; $(printf literal)"
@@ -210,7 +240,9 @@ def tunneled_call(binary: Path, directory: Path, config: Path) -> dict:
             require(called.get("isError", False) is False and called.get("content") == [{"type": "text", "text": text}],
                     "Real official tunnel did not return the exact CLI result")
             return {"official_local_tunnel_tool_call": "passed", "tool": "echo_text",
-                    "strict_text_equality": True, "fixture": "official-dev-proxy"}
+                    "strict_text_equality": True, "fixture": "official-dev-proxy",
+                    "caller_sent_initialized": send_initialized,
+                    "notification_shim": server.get('stdio_send_initialized_notification', False)}
         finally:
             if transport is not None:
                 transport.close()
@@ -235,8 +267,15 @@ def main() -> None:
                                          runtime_key_file=str(key_file))
         connect.write_json(config, value)
         managed = managed_runtime(binary, directory / "managed", config)
-        tunneled = tunneled_call(binary, directory, config)
+        tunneled = tunneled_call(binary, directory / 'normal', config)
+        omitted = tunneled_call(binary, directory / 'without-notification', config,
+                                send_initialized=False, expect_initialization_error=True)
+        value['servers']['demo']['stdio_send_initialized_notification'] = True
+        connect.write_json(config, value, replace=True)
+        shimmed = tunneled_call(binary, directory / 'with-notification-shim', config, send_initialized=False)
         print(json.dumps({"managed_runtime": managed, "local_tunnel": tunneled,
+                          "missing_initialized_notification": omitted,
+                          "initialized_notification_shim": shimmed,
                           "chatgpt_end_to_end_verified": False}, indent=2))
 
 

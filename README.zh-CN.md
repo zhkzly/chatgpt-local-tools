@@ -98,7 +98,14 @@ python3 skills/connect-local-tools/scripts/connect.py status --server llm-wiki
 这是本地明文文件，不是加密钥匙串。原环境变量模式仍可使用；显式更新密钥用共享 `save-key` 命令，
 详见[凭据配置](skills/connect-local-tools/references/configuration.md)。
 
-**通用版使用官方后台进程管理，关闭启动终端不会停止连接。停止请执行：**
+**通用版使用官方后台进程管理，关闭启动终端不会停止连接。**
+
+同一 stdio Tunnel ID 只运行一个客户端，日常固定使用同一启动器和状态目录；重复 `start` 会复用已有受管进程。
+关闭、重开 Wiki 桌面软件时，一般只需等本地 API 恢复，不要再开一个隧道。旧 Python 脚本即使已释放锁，
+其独立后台客户端也可能仍存活；新版迁移会核对旧 profile 对应的进程并拒绝重叠启动。
+LLM Wiki 示例还启用了官方 initialized 通知兼容开关；它不能代替清理重复客户端。
+
+停止请执行：
 
 ```bash
 python3 skills/connect-local-tools/scripts/connect.py stop --server llm-wiki

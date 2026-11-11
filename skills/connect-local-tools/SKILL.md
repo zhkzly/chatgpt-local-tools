@@ -87,6 +87,12 @@ Use a separate alias and tunnel ID per independent server. Verify current accoun
 access, workspace association and pricing; do not infer them from a plan name.
 The launcher binds an existing tunnel and does not request an admin key.
 
+Before replacing a stdio deployment, inventory the actual client processes and
+their native profiles on that host, not only the Python wrapper's lock or the
+launcher's own state directory. A detached tunnel client may outlive its Python
+parent after the parent releases its lock. Keep one active client per stdio
+Tunnel ID and use one entry point/state directory for ordinary retries.
+
 Have the user enter the runtime key in a hidden local prompt or protected
 environment. Follow the host's existing permissions and complete authorized work
 without inventing new approval gates.
@@ -109,6 +115,18 @@ python3 scripts/connect.py stop --server NAME
 does not stop it; use `stop`. Retain the config/skill and keep the host/upstream app
 available. State, profiles and logs live in the project's private data directory.
 Managed background operation does not install OS startup or restart services.
+
+Closing/reopening an upstream desktop app normally affects its local API, not
+the tunnel's lifecycle. Wait for that API to return before retrying tools; do not
+start a second tunnel for the same ID. Repeated unchanged `start` reuses its
+managed runtime. Use `stop` then `start` for an intentional shared-launcher restart.
+
+For a legacy caller that sends `initialize` but omits the initialized notification,
+the stdio-only boolean `stdio_send_initialized_notification` enables the official
+compatibility shim. It forwards the required notification after a successful
+initialize and suppresses a later duplicate. It does not generate initialize or
+replace duplicate-client cleanup. LLM Wiki templates opt in; other connections
+keep the official default unless configured. See [configuration.md](references/configuration.md).
 
 For deliberate key replacement, use `scripts/connect.py save-key --config CONFIG
 --server NAME --replace`, then stop/start to apply it. For an existing foreground

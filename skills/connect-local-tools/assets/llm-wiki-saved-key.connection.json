@@ -3,6 +3,7 @@
   "servers": {
     "llm-wiki": {
       "transport": "stdio",
+      "stdio_send_initialized_notification": true,
       "command": "node",
       "args": ["/usr/lib/LLM Wiki/mcp-server/dist/src/index.js"],
       "env": {"LLM_WIKI_API_BASE_URL": "http://127.0.0.1:19828"},

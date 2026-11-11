@@ -141,3 +141,27 @@ A saved-key LLM Wiki template has been added. CI validates all bundled examples.
 No existing user's local deployment, credential file or running process is
 changed merely by publishing this shared capability. Doctor is a configuration
 diagnostic, not proof of hosted authentication or a successful ChatGPT call.
+
+## Orphaned-client and initialization repair, 2026-11-11
+
+A real connected deployment had both a detached legacy client and its managed
+replacement polling the same stdio Tunnel ID. The Python parent's lock was free,
+so the original lock-only migration check had missed the surviving native client.
+Local API health and tunnel readiness were successful while tool calls alternated
+between success and native `mcp_initialization_required` errors. The new client
+also enabled the official initialized-notification shim as compatibility support.
+
+After gracefully stopping only the reviewed legacy client, process inventory
+showed one remaining client. Six consecutive calls through the connected plugin
+passed: status twice, hybrid search twice and the same Markdown read twice.
+No credential, Tunnel ID or local port was changed for this cleanup. The duplicate
+client was the demonstrated deployment cause; a missing caller notification was
+an earlier hypothesis, not independently proven as the sole cause.
+
+Regression coverage now refuses matching native-profile conflicts even when the
+Python lock is missing or free, without signalling a process based only on that
+conflict. Other profiles remain untouched. Stdio notification compatibility is
+typed, opt-in for general connections and enabled by the LLM Wiki templates.
+The real-client smoke additionally omits the caller's initialized notification:
+the default must return the native initialization error; the compatibility option
+must then permit tool discovery and the exact echo call without caller notification.
